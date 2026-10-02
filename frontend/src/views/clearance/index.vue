@@ -12,7 +12,7 @@
     </header>
 
     <div class="stat-row">
-      <article v-for="item in stats" :key="item.label" class="stat-card">
+      <article v-for="item in statCards" :key="item.label" class="stat-card">
         <span class="stat-label">{{ item.label }}</span>
         <strong class="stat-value">{{ item.value }}</strong>
       </article>
@@ -38,22 +38,16 @@
         <tr>
           <th v-for="column in columns" :key="column">{{ column }}</th>
           <th>当前状态</th>
-          <th>可执行动作</th>
+          <th>办理</th>
         </tr>
       </thead>
       <tbody>
         <tr v-for="row in rows" :key="String(row.id)">
-          <td v-for="column in columns" :key="column">{{ row[column] ?? '—' }}</td>
+          <td v-for="column in columns" :key="column">{{ row[column] === '' || row[column] == null ? '—' : row[column] }}</td>
           <td>{{ row.status }}</td>
           <td class="row-actions">
-            <button
-              v-for="action in actions"
-              :key="action"
-              class="link"
-              type="button"
-              @click="runAction(action, row)"
-            >
-              {{ action }}
+            <button class="link" type="button" @click="openDrawer(Number(row.id))">
+              {{ actionLabel(row.status) }}
             </button>
           </td>
         </tr>
@@ -63,41 +57,110 @@
       </tbody>
     </table>
 
+    <section class="reconcile-panel">
+      <h3>支挡结构台账 · 核销依据比对</h3>
+      <p class="page-desc">
+        核销收尾会在支挡结构台账幂等生成一条「重新建档」项（同一核销编号只此一条）。
+        两处核销依据口径<strong>以隐患核销单（持久化那份）为准</strong>，台账副本不一致时可按核销单对齐。
+      </p>
+      <table v-if="mismatches.length" class="data-table">
+        <thead>
+          <tr>
+            <th>核销编号</th>
+            <th>核销单核销依据（优先）</th>
+            <th>台账留存核销依据</th>
+            <th>操作</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="item in mismatches" :key="item.clearanceId">
+            <td>{{ item.核销编号 }}</td>
+            <td>{{ item.clearanceBasis }}</td>
+            <td>{{ item.wallBasis }}</td>
+            <td>
+              <button class="link" type="button" @click="syncOne(item.clearanceId)">按核销单对齐台账</button>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+      <p v-else class="empty-state">已核销核销单与支挡结构台账的核销依据全部一致</p>
+      <p v-if="syncMessage" :class="syncOk ? 'ok-text' : 'error-text'">{{ syncMessage }}</p>
+    </section>
+
     <footer class="page-foot">
       <span>共 {{ total }} 条隐患核销记录</span>
       <span v-if="errorMessage" class="error-text">{{ errorMessage }}</span>
     </footer>
+
+    <ReviewDrawer
+      :open="drawerOpen"
+      :id="drawerId"
+      @close="closeDrawer"
+      @changed="reload"
+    />
   </section>
 </template>
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 
+import { downloadEntries, listEntries, moduleMeta } from '@/api/local-service'
 import {
-  downloadEntries,
-  listEntries,
-  moduleMeta,
-  runAction as applyAction,
-} from '@/api/local-service'
+  basisMismatches,
+  CLEARANCE_STATUSES,
+  syncBasisFromClearance,
+} from '@/api/clearance-service'
 import type { EntryRow } from '@/data/types'
+
+import ReviewDrawer from './ReviewDrawer.vue'
 
 const meta = moduleMeta('clearance')
 const columns = ["核销编号", "所属隐患点", "核销依据", "复核人", "复核日期", "核销结论", "归档日期", "核销状态"]
-const actions = ["提交复核", "确认核销", "驳回申请"]
-const statuses = ["待复核", "复核中", "已核销", "已驳回"]
-const stats = [{"label": "待复核核销单", "value": 0}, {"label": "已核销隐患点", "value": 0}, {"label": "已驳回申请", "value": 0}]
+const statuses = [...CLEARANCE_STATUSES]
+const filterFields = columns.slice(0, 3)
 
 const rows = ref<EntryRow[]>([])
 const total = ref(0)
 const errorMessage = ref('')
 const filters = ref<Record<string, string>>({})
-const filterFields = columns.slice(0, 3)
+
+const drawerOpen = ref(false)
+const drawerId = ref<number | null>(null)
+const syncMessage = ref('')
+const syncOk = ref(false)
+
 const statusSummary = computed(() =>
   statuses.map((status: string) => ({
     status,
     count: rows.value.filter((row) => String(row.status) === status).length,
   })),
 )
+
+// 统计卡片直接读当前列表（与表格同源），不再写死 0。
+const statCards = computed(() => [
+  { label: '待复核核销单', value: countByStatus('待复核') },
+  { label: '已核销隐患点', value: countByStatus('已核销') },
+  { label: '已驳回申请', value: countByStatus('已驳回') },
+])
+
+const mismatches = computed(() => basisMismatches())
+
+function countByStatus(status: string): number {
+  return rows.value.filter((row) => String(row.status) === status).length
+}
+
+function actionLabel(status: string): string {
+  switch (status) {
+    case '待复核':
+      return '提交复核'
+    case '复核中':
+      return '继续复核'
+    case '已驳回':
+      return '核对退回'
+    default:
+      return '查看核销单'
+  }
+}
 
 function resetFilters() {
   filters.value = {}
@@ -112,18 +175,29 @@ function openCreate() {
   errorMessage.value = '核销单登记入口尚未接入审批流'
 }
 
-function runAction(action: string, row: EntryRow) {
-  errorMessage.value = ''
-  const result = applyAction(meta.key, Number(row.id), action)
-  if (!result.ok) {
-    errorMessage.value = result.message
-    return
-  }
+function openDrawer(id: number) {
+  drawerId.value = id
+  drawerOpen.value = true
+}
+
+function closeDrawer() {
+  drawerOpen.value = false
+  drawerId.value = null
   reload()
+}
+
+function syncOne(id: number) {
+  const result = syncBasisFromClearance(id)
+  syncMessage.value = result.message
+  syncOk.value = result.ok
+  if (result.ok) {
+    reload()
+  }
 }
 
 function reload() {
   errorMessage.value = ''
+  syncMessage.value = ''
   try {
     const payload = listEntries(meta.key, filters.value)
     rows.value = payload.items
@@ -135,3 +209,16 @@ function reload() {
 
 onMounted(reload)
 </script>
+
+<style scoped>
+.reconcile-panel {
+  margin-top: 18px;
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px 14px;
+}
+.reconcile-panel h3 { margin: 0 0 6px; font-size: 15px; }
+.reconcile-panel .data-table { margin-top: 10px; }
+.ok-text { color: #067647; }
+</style>

@@ -23,12 +23,23 @@ export function filterRows(rows: EntryRow[], filters: Record<string, string>): E
   )
 }
 
+function clone<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T
+}
+
 export function listEntries(key: string, filters: Record<string, string> = {}): PageResult {
-  const matched = filterRows(listRows(key), filters)
+  // 统一返回持久化数据的副本：列表页与任何弹窗拿到的都是同一份存储的快照，
+  // 页面内的临时编辑不会污染缓存，两个入口读出来的字段不会两样。
+  const matched = filterRows(clone(listRows(key)), filters)
   return { items: matched, total: matched.length, page: 1, size: matched.length }
 }
 
 export function runAction(key: string, id: number, action: string): ActionResult {
+  // 核销单有独立的状态机与一次落库逻辑（驳回清空中间态、环节次序守卫、极值单独退回），
+  // 不允许从通用入口绕过，防止跳环节流转和半份写入。
+  if (key === 'clearance') {
+    return { ok: false, message: '核销单请使用复核抽屉办理，通用动作入口不受理' }
+  }
   const meta = moduleMeta(key)
   const target = meta.actionTargets[action]
   if (!target) {

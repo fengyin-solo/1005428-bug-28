@@ -67,6 +67,37 @@
       <span>共 {{ total }} 条支挡结构记录</span>
       <span v-if="errorMessage" class="error-text">{{ errorMessage }}</span>
     </footer>
+
+    <section class="rebuild-panel">
+      <h3>核销收尾 · 重新建档项</h3>
+      <p class="page-desc">
+        隐患核销确认后在此幂等生成重新建档项，同一核销编号只保留一条；
+        留存的核销依据用于与核销单比对，口径冲突时<strong>以隐患核销单为准</strong>，请到「隐患核销」页核对对齐。
+      </p>
+      <table v-if="rebuilds.length" class="data-table">
+        <thead>
+          <tr>
+            <th>核销编号</th>
+            <th>结构编号</th>
+            <th>所属工程（隐患点）</th>
+            <th>结构形式</th>
+            <th>核销依据（台账副本）</th>
+            <th>当前状态</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="row in rebuilds" :key="String(row.id)">
+            <td>{{ row['核销编号'] ?? '—' }}</td>
+            <td>{{ row['结构编号'] ?? '—' }}</td>
+            <td>{{ row['所属工程'] ?? '—' }}</td>
+            <td>{{ row['结构形式'] ?? '—' }}</td>
+            <td>{{ row['核销依据'] ?? '—' }}</td>
+            <td>{{ row.status }}</td>
+          </tr>
+        </tbody>
+      </table>
+      <p v-else class="empty-state">暂无核销收尾产生的重新建档项</p>
+    </section>
   </section>
 </template>
 
@@ -79,6 +110,7 @@ import {
   moduleMeta,
   runAction as applyAction,
 } from '@/api/local-service'
+import { listWallRebuilds } from '@/api/clearance-service'
 import type { EntryRow } from '@/data/types'
 
 const meta = moduleMeta('wall')
@@ -98,6 +130,9 @@ const statusSummary = computed(() =>
     count: rows.value.filter((row) => String(row.status) === status).length,
   })),
 )
+
+// 核销收尾生成的重新建档项：同一核销编号只此一条，列表与核销页比对面板同源。
+const rebuilds = computed(() => listWallRebuilds())
 
 function resetFilters() {
   filters.value = {}
@@ -135,3 +170,15 @@ function reload() {
 
 onMounted(reload)
 </script>
+
+<style scoped>
+.rebuild-panel {
+  margin-top: 18px;
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px 14px;
+}
+.rebuild-panel h3 { margin: 0 0 6px; font-size: 15px; }
+.rebuild-panel .data-table { margin-top: 10px; }
+</style>
