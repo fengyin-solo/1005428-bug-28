@@ -1,5 +1,11 @@
 import { MODULE_BY_KEY } from '@/data/modules'
 import { allRows, listRows, resetRows, saveRows } from '@/data/local-store'
+import {
+  confirmClearance,
+  rejectClearance,
+  submitClearance,
+} from './clearance-service'
+import { CLEARANCE_KEY } from '@/data/domain/clearance'
 import type { ActionResult, EntryRow, ModuleMeta, OverviewResult, PageResult } from '@/data/types'
 
 // 会写进数据的「往回走」动作：命中就把这条记录标成异常态，看板上能一眼看出来。
@@ -30,6 +36,19 @@ export function listEntries(key: string, filters: Record<string, string> = {}): 
 
 export function runAction(key: string, id: number, action: string): ActionResult {
   const meta = moduleMeta(key)
+  // 核销单有独立的状态机与一次落库规则，不允许走通用流转绕过去。
+  if (key === CLEARANCE_KEY) {
+    if (action === '提交复核') {
+      return submitClearance(id)
+    }
+    if (action === '驳回申请') {
+      return rejectClearance(id)
+    }
+    return {
+      ok: false,
+      message: `核销单的「${action}」请在核销复核弹窗中办理，列表动作不直接改单`,
+    }
+  }
   const target = meta.actionTargets[action]
   if (!target) {
     return { ok: false, message: `${meta.entity}没有登记「${action}」这个动作` }

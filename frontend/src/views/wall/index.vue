@@ -43,7 +43,16 @@
       </thead>
       <tbody>
         <tr v-for="row in rows" :key="String(row.id)">
-          <td v-for="column in columns" :key="column">{{ row[column] ?? '—' }}</td>
+          <td v-for="column in columns" :key="column">
+            <template v-if="column === '结构编号'">
+              {{ row[column] ?? '—' }}
+              <span v-if="isLedgerRow(row)" class="badge ledger">核销重新建档</span>
+            </template>
+            <template v-else-if="column === '结构状态'">
+              {{ row[column] || row.status || '—' }}
+            </template>
+            <template v-else>{{ row[column] ?? '—' }}</template>
+          </td>
           <td>{{ row.status }}</td>
           <td class="row-actions">
             <button
@@ -63,6 +72,11 @@
       </tbody>
     </table>
 
+    <p v-if="ledgerRows.length" class="notice">
+      其中 {{ ledgerRows.length }} 条为隐患核销收尾联动生成的「重新建档」项，同一核销编号只建一条；
+      台账内的核销依据为快照，两处比对不一致时以隐患核销单为准。
+    </p>
+
     <footer class="page-foot">
       <span>共 {{ total }} 条支挡结构记录</span>
       <span v-if="errorMessage" class="error-text">{{ errorMessage }}</span>
@@ -79,6 +93,7 @@ import {
   moduleMeta,
   runAction as applyAction,
 } from '@/api/local-service'
+import { WALL_LEDGER_SOURCE } from '@/data/domain/clearance'
 import type { EntryRow } from '@/data/types'
 
 const meta = moduleMeta('wall')
@@ -98,6 +113,12 @@ const statusSummary = computed(() =>
     count: rows.value.filter((row) => String(row.status) === status).length,
   })),
 )
+
+function isLedgerRow(row: EntryRow): boolean {
+  return row[WALL_LEDGER_SOURCE] === '核销联动重新建档'
+}
+
+const ledgerRows = computed(() => rows.value.filter(isLedgerRow))
 
 function resetFilters() {
   filters.value = {}
